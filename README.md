@@ -18,7 +18,7 @@ Open Source Resource System Monitor is a program for monitoring temperature and 
 
 ##  Download
 
-**[Download Lemon Terminal (Releases page)](https://github.com/MihanPROJECTS/lemon-terminal/releases)**
+**[Download OSRSM (Releases page)](https://github.com/MihanPROJECTS/OS-RSM/releases)**
 - **Linux** - `OSRSM`
 
 > [!IMPORTANT]
