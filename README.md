@@ -1,3 +1,4 @@
+<img width="220" height="220" alt="OSRSM.png" src="assets/icon.png" />
 # OS-RSM
 Open Source Resource System Monitor is a program for monitoring temperature and the usage of CPU, RAM, swap, and disk. It also displays selected information in your operating system's system tray.
 >[!NOTE]
