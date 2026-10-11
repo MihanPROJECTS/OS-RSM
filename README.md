@@ -1,4 +1,4 @@
-<img width="220" height="220" alt="OSRSM.png" src="assets/icon.png" />
+<img width="220" height="220" alt="OSRSM.png" src="assets/icon11.png" />
 
 # OS-RSM
 
