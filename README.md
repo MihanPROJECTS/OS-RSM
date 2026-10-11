@@ -26,8 +26,13 @@ Open Source Resource System Monitor is a program for monitoring temperature and 
 
 ##  Available functions
 Click the small square in your OS system tray. A window will open allowing you to select tray modules. Choose the desired one from the list, and it will be applied to the system tray; you can then close the program, and it will continue running in the background.
+* **`Double tap to DISK tile `** - Opens a progress bar showing disk usage.
+* **`Click the pencil icon`** - Opens the color-change palette for the selected tile.
+* **`Click the X icon.`** - Clears custom tile colors, reverting them to the default ones.
+* **`Click the "?" icon.`** - Opens the Help menu, where you can explore the program's functions.
+## You can find out about more features in the "?" Help section.
 
-###  BLOCKS
+###  Tiles
 * **`CPU usage % (GREEN)`**
 * **`RAM usage % (VIOLET)`**
 * **`DISK usage % (YELLOW)`**
