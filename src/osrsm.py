@@ -11,27 +11,78 @@ import pystray
 from pystray import MenuItem as item
 
 import tkinter as tk
+from tkinter import filedialog
 
 
 APP_NAME = "OS-RSM"
-APP_VERSION = "1.0s1b"
+APP_VERSION = "2.0r"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    BASE_DIR = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 CONFIG_PATH = os.path.expanduser("~/.config/tray-monitor.json")
+BG_IMAGE_PATH = os.path.expanduser("~/.config/tray-monitor/background.png")
 
 EDIT_ICON_PATH = os.path.join(ASSETS_DIR, "edit.png")
 CLEAR_ICON_PATH = os.path.join(ASSETS_DIR, "clear.png")
 VOPROS_ICON_PATH = os.path.join(ASSETS_DIR, "vopros.png")
+PALL_ICON_PATH = os.path.join(ASSETS_DIR, "pall.png")
+WALL_PATH = os.path.join(ASSETS_DIR, "wall.png")
 
 DEFAULT_COLORS = {
-    "CPU":  "#59ff00",
-    "RAM":  "#c300eb",
-    "DISK": "#ffc800",
-    "SWAP": "#0080ff",
-    "TEMP": "#ff4040",
+    "CPU":  "#ff3030",
+    "RAM":  "#30ff30",
+    "DISK": "#3030ff",
+    "SWAP": "#ffcc00",
+    "TEMP": "#ff30ff",
 }
+
+CUSTOM_KEY = "CUSTOM"
+CUSTOM_COLOR = "#7a7a7a"
+
+ALL_KEYS = ["CPU", "RAM", "DISK", "SWAP", "TEMP"]
+
+BG = "#0a0a0a"
+PANEL = "#1f1f1f"
+PANEL_HOVER = "#2a2a2a"
+PANEL_PRESS = "#0f0f0f"
+DIVIDER = "#2f2f2f"
+TEXT_MUTED = "#6b6b6b"
+TEXT = "#e0e0e0"
+
+DEFAULT_ACCENT = "#0078d4"
+
+UI_FONT = "Segoe UI"
+UI_FONT_BOLD = "Segoe UI Semibold"
+
+SQUARE_BORDER_WIDTH = 2
+
+
+_bg_source = None
+_bg_source_path = None
+
+
+def load_background():
+    global _bg_source, _bg_source_path
+    _bg_source = None
+    _bg_source_path = None
+    return False
+
+
+def has_background():
+    return False
+
+
+def tile_uses_bg(key):
+    return False
+
+
+def get_bg_piece(row, col, cols, rows, size):
+    return None
 
 
 def find_font_file():
@@ -53,11 +104,8 @@ def load_config():
     if not os.path.exists(CONFIG_PATH):
         return {}
     try:
-        f = open(CONFIG_PATH, "r", encoding="utf-8")
-        try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-        finally:
-            f.close()
     except Exception as e:
         print("config broken:", e)
         return {}
@@ -67,17 +115,87 @@ def save_config(cfg):
     d = os.path.dirname(CONFIG_PATH)
     if d and not os.path.isdir(d):
         os.makedirs(d, exist_ok=True)
-    f = open(CONFIG_PATH, "w", encoding="utf-8")
     try:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-    finally:
-        f.close()
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("save_config:", e)
 
 
 CONFIG = load_config()
+load_background()
 
 
-# счетчики
+def get_accent():
+    return CONFIG.get("accent_color", DEFAULT_ACCENT)
+
+
+def save_accent(color):
+    CONFIG["accent_color"] = color
+    save_config(CONFIG)
+
+
+def get_effect():
+    e = CONFIG.get("palette_effect", "cascade")
+    if e not in ("cascade", "left", "right", "top", "bottom"):
+        e = "cascade"
+    return e
+
+
+def save_effect(e):
+    CONFIG["palette_effect"] = e
+    save_config(CONFIG)
+
+
+def hex_to_rgb(h):
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def rgb_to_hex(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def lum(rgb):
+    return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+
+
+def lighten(hex_color, amount):
+    r, g, b = hex_to_rgb(hex_color)
+    return rgb_to_hex((
+        min(255, int(r + (255 - r) * amount)),
+        min(255, int(g + (255 - g) * amount)),
+        min(255, int(b + (255 - b) * amount)),
+    ))
+
+
+def darken(hex_color, amount):
+    r, g, b = hex_to_rgb(hex_color)
+    return rgb_to_hex((
+        max(0, int(r * (1 - amount))),
+        max(0, int(g * (1 - amount))),
+        max(0, int(b * (1 - amount))),
+    ))
+
+
+def accent_fg(accent_hex):
+    try:
+        rgb = hex_to_rgb(accent_hex)
+    except Exception:
+        return "#ffffff"
+    return "#000000" if lum(rgb) > 150 else "#ffffff"
+
+
+def blend(hex_a, hex_b, t):
+    ra, ga, ba = hex_to_rgb(hex_a)
+    rb, gb, bb = hex_to_rgb(hex_b)
+    return rgb_to_hex((
+        int(ra + (rb - ra) * t),
+        int(ga + (gb - ga) * t),
+        int(ba + (bb - ba) * t),
+    ))
+
+
 def get_cpu():
     return psutil.cpu_percent(interval=None)
 
@@ -119,8 +237,31 @@ METRICS = {
     "TEMP": {"fn": get_temp_c, "color": DEFAULT_COLORS["TEMP"]},
 }
 
-CUSTOM_KEY = "CUSTOM"
-CUSTOM_COLOR = "#7a7a7a"
+
+def ensure_order_in_config():
+    if "tile_order" not in CONFIG or not isinstance(CONFIG["tile_order"], list):
+        order = list(ALL_KEYS)
+    else:
+        seen = set()
+        cleaned = []
+        for k in CONFIG["tile_order"]:
+            if k in ALL_KEYS and k not in seen:
+                cleaned.append(k)
+                seen.add(k)
+        order = cleaned
+
+    if CUSTOM_KEY in order:
+        order.remove(CUSTOM_KEY)
+    order.append(CUSTOM_KEY)
+    CONFIG["tile_order"] = order
+
+    if "hidden_tiles" not in CONFIG or not isinstance(CONFIG["hidden_tiles"], list):
+        CONFIG["hidden_tiles"] = []
+
+    save_config(CONFIG)
+
+
+ensure_order_in_config()
 
 
 def get_color(key):
@@ -129,7 +270,9 @@ def get_color(key):
         return colors[key]
     if key == CUSTOM_KEY:
         return CUSTOM_COLOR
-    return METRICS[key]["color"]
+    if key in METRICS:
+        return METRICS[key]["color"]
+    return "#7a7a7a"
 
 
 def save_color(key, color):
@@ -137,22 +280,39 @@ def save_color(key, color):
     save_config(CONFIG)
 
 
+def set_no_bg(key, no_bg):
+    pass
+
+
+RESET_COLOR = DEFAULT_ACCENT
+
+
 def reset_colors():
     CONFIG["colors"] = {}
+    CONFIG["accent_color"] = RESET_COLOR
+    for k in list(CONFIG.get("tile_order", [])):
+        CONFIG["colors"][k] = RESET_COLOR
     save_config(CONFIG)
 
 
-def hex_to_rgb(h):
-    h = h.lstrip("#")
-    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+def tint_icon(path, color, size):
+    try:
+        size = int(size)
+        if size < 1:
+            size = 1
+        img = Image.open(path).convert("RGBA")
+        img = img.resize((size, size), Image.LANCZOS)
+        r, g, b, a = img.split()
+        solid = Image.new("RGBA", img.size, color)
+        solid.putalpha(a)
+        return ImageTk.PhotoImage(solid)
+    except Exception as e:
+        print("tint_icon:", e)
+        return None
 
 
-def rgb_to_hex(rgb):
-    return "#{:02x}{:02x}{:02x}".format(*rgb)
-
-
-def lum(rgb):
-    return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+def icon_color_for_accent(accent_hex):
+    return accent_fg(accent_hex)
 
 
 _font_cache = {}
@@ -220,7 +380,6 @@ def stats_worker():
         time.sleep(1.0)
 
 
-# иконка в трее
 def render_tray_icon():
     with state.lock:
         name = state.current
@@ -228,20 +387,13 @@ def render_tray_icon():
         unit = state.temp_unit
         raw = state.values.get(name, 0)
 
-    if raw is None:
-        val = None
-    else:
-        val = int(round(raw))
-
+    val = None if raw is None else int(round(raw))
     special_temp = False
 
     if name == CUSTOM_KEY:
         color = hex_to_rgb(get_color(CUSTOM_KEY))
         text = custom if custom else "..."
-        if len(text) <= 2:
-            f_big = get_font(_scaled(40))
-        else:
-            f_big = get_font(_scaled(28))
+        f_big = get_font(_scaled(40 if len(text) <= 2 else 28))
     elif name == "TEMP":
         color = hex_to_rgb(get_color("TEMP"))
         if val is None:
@@ -252,29 +404,20 @@ def render_tray_icon():
             if unit == "F":
                 t = int(round(t * 9 / 5 + 32))
             text = str(t)
-            if len(text) <= 2:
-                f_big = get_font(_scaled(38))
-            else:
-                f_big = get_font(_scaled(32))
+            f_big = get_font(_scaled(38 if len(text) <= 2 else 32))
             special_temp = True
     else:
         color = hex_to_rgb(get_color(name))
         text = str(val)
-        if len(text) <= 2:
-            f_big = get_font(_scaled(36))
-        else:
-            f_big = get_font(_scaled(30))
+        f_big = get_font(_scaled(36 if len(text) <= 2 else 30))
 
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    d.rounded_rectangle((2, 2, size - 2, size - 2), radius=10, fill=color)
+    d.rounded_rectangle((2, 2, size - 2, size - 2), radius=0, fill=color)
 
-    if lum(color) > 140:
-        fg = (0, 0, 0)
-    else:
-        fg = (255, 255, 255)
+    fg = (0, 0, 0) if lum(color) > 140 else (255, 255, 255)
 
     if special_temp:
         bbox = d.textbbox((0, 0), text, font=f_big)
@@ -305,8 +448,12 @@ def build_tray():
         ui_queue.put("open_window")
 
     def on_quit(icon, item_):
-        icon.stop()
+        try:
+            icon.stop()
+        except Exception:
+            pass
         ui_queue.put("quit")
+        threading.Timer(0.2, lambda: os._exit(0)).start()
 
     icon = pystray.Icon(
         name="sysmon",
@@ -314,11 +461,11 @@ def build_tray():
         title=APP_NAME + " v" + APP_VERSION,
         menu=pystray.Menu(
             item("Open", on_open, default=True),
-            item("Quit", on_quit),
+            item("EXIT", on_quit),
         ),
     )
 
-    _tray_cache = {"key": None}
+    _cache = {"key": None}
 
     def refresh():
         while True:
@@ -326,22 +473,18 @@ def build_tray():
                 with state.lock:
                     key = (state.current, state.values.get(state.current),
                            state.custom_text, state.temp_unit,
-                           tuple(CONFIG.get("colors", {}).items()))
-                if key != _tray_cache["key"]:
-                    _tray_cache["key"] = key
+                           tuple(CONFIG.get("colors", {}).items()),
+                           get_accent())
+                if key != _cache["key"]:
+                    _cache["key"] = key
                     icon.icon = render_tray_icon()
             except Exception as e:
                 print("tray refresh:", e)
             time.sleep(1.0)
 
-    t = threading.Thread(target=refresh, daemon=True)
-    t.start()
+    threading.Thread(target=refresh, daemon=True).start()
     return icon
 
-
-BG = "#1e1e1e"
-TEXT_MUTED = "#777777"
-PANEL = "#2a2a33"
 
 TILE_SIZE = 96
 TILE_RENDER_SIZE = 192
@@ -349,65 +492,89 @@ TILE_RENDER_SIZE = 192
 TILE_FONT_VALUE = 72
 TILE_FONT_LABEL = 22
 
+_tile_bg_cache = {}
+_tile_bg_cache_lock = threading.Lock()
 
-def render_tile_image(color_hex, value_text, label_text,
-                      hovered, pressed, active,
-                      wave_r=None, wave_alpha=0):
+
+def _get_tile_bg(color_hex, hovered, active, fg_is_light):
+    cache_key = (color_hex, hovered, active, fg_is_light)
+    with _tile_bg_cache_lock:
+        cached = _tile_bg_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     s = TILE_RENDER_SIZE
     img = Image.new("RGB", (s, s), color_hex)
-    d = ImageDraw.Draw(img)
 
-    rgb = hex_to_rgb(color_hex)
-    if lum(rgb) > 140:
-        fg = (0, 0, 0)
-        wave_color = (0, 0, 0)
-    else:
-        fg = (255, 255, 255)
-        wave_color = (255, 255, 255)
-
-    if active:
-        d.rectangle((0, 0, s, 8), fill=(255, 255, 255))
-
-    f_val = get_font(_scaled(TILE_FONT_VALUE))
-    bbox = d.textbbox((0, 0), value_text, font=f_val)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
-    d.text(((s - tw) / 2 - bbox[0], s / 2 - th / 2 - bbox[1] - 10),
-           value_text, font=f_val, fill=fg)
-
-    f_lbl = get_font(_scaled(TILE_FONT_LABEL))
-    bbox2 = d.textbbox((0, 0), label_text, font=f_lbl)
-    lw = bbox2[2] - bbox2[0]
-    d.text(((s - lw) / 2 - bbox2[0], s - 40),
-           label_text, font=f_lbl, fill=fg)
-
-    if wave_r is not None and wave_alpha > 0:
-        overlay = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        cx = s // 2
-        cy = s // 2
-        r = int(wave_r)
-        thick = max(2, int(s * 0.10))
-        bbox_ring = (cx - r, cy - r, cx + r, cy + r)
-        od.ellipse(bbox_ring,
-                   outline=wave_color + (wave_alpha,),
-                   width=thick)
-        img = Image.alpha_composite(img.convert("RGBA"),
-                                    overlay).convert("RGB")
-
-    img = img.resize((TILE_SIZE, TILE_SIZE), Image.LANCZOS)
-
-    if hovered or pressed:
-        step = 5 if not pressed else 3
-        dot = (0, 0, 0) if lum(rgb) > 140 else (255, 255, 255)
-        alpha = 600
-        overlay = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        for y in range(0, TILE_SIZE, step):
-            for x in range(0, TILE_SIZE, step):
-                od.point((x, y), fill=dot + (alpha,))
+    if hovered and not active:
+        if not fg_is_light:
+            overlay = Image.new("RGBA", (s, s), (255, 255, 255, 40))
+        else:
+            overlay = Image.new("RGBA", (s, s), (0, 0, 0, 40))
         img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
+    if active:
+        base_rgb = hex_to_rgb(color_hex)
+        base_lum = lum(base_rgb)
+        if base_lum < 128:
+            factor = 1.55
+            new_rgb = tuple(min(255, int(c * factor)) for c in base_rgb)
+        else:
+            factor = 0.55
+            new_rgb = tuple(max(0, int(c * factor)) for c in base_rgb)
+        new_hex = rgb_to_hex(new_rgb)
+        overlay = Image.new("RGB", (s, s), new_hex)
+        img = Image.blend(img, overlay, 0.60)
+
+    with _tile_bg_cache_lock:
+        if len(_tile_bg_cache) > 200:
+            _tile_bg_cache.clear()
+        _tile_bg_cache[cache_key] = img
+    return img
+
+
+def render_tile_image(color_hex, value_text, label_text,
+                      hovered, active,
+                      font_scale):
+    s = TILE_RENDER_SIZE
+
+    base_rgb = hex_to_rgb(color_hex)
+    fg_is_light = lum(base_rgb) > 128
+    fg = (0, 0, 0) if fg_is_light else (255, 255, 255)
+
+    bg = _get_tile_bg(color_hex, hovered, active, fg_is_light)
+    img = bg.copy()
+    d = ImageDraw.Draw(img)
+
+    pad_x = int(s * 0.06)
+    pad_y = int(s * 0.06)
+    bottom_pad = int(s * 0.08)
+
+    def _scaled_local(n):
+        return max(6, int(round(n * font_scale)))
+
+    f_val_size = TILE_FONT_VALUE + 30
+    f_val = get_font(_scaled_local(f_val_size))
+    while f_val_size > 40:
+        bb = d.textbbox((0, 0), value_text, font=f_val)
+        if bb[2] - bb[0] <= s - pad_x * 2:
+            break
+        f_val_size -= 4
+        f_val = get_font(_scaled_local(f_val_size))
+
+    bbox = d.textbbox((0, 0), value_text, font=f_val)
+    d.text((pad_x - bbox[0], pad_y - bbox[1]),
+           value_text, font=f_val, fill=fg)
+
+    f_lbl = get_font(_scaled_local(TILE_FONT_LABEL))
+    label_upper = label_text.upper()
+    bbox2 = d.textbbox((0, 0), label_upper, font=f_lbl)
+    lh = bbox2[3] - bbox2[1]
+    y_lbl = s - bottom_pad - lh - bbox2[1]
+    d.text((pad_x - bbox2[0], y_lbl),
+           label_upper, font=f_lbl, fill=fg)
+
+    img = img.resize((TILE_SIZE, TILE_SIZE), Image.LANCZOS)
     return img
 
 
@@ -418,75 +585,394 @@ def human_bytes(n):
         n /= 1024
     return f"{n:.1f} PB"
 
-class ColorSlider(tk.Canvas):
-    W = 200
-    H = 24
-    PAD = 12
-    KNOB_R = 9
-    DOT_R = 4
 
-    def __init__(self, parent, color_hex, initial, on_change):
-        super().__init__(parent, width=self.W, height=self.H,
-                         bg=BG, highlightthickness=0, bd=0)
-        self.color_hex = color_hex
-        self.value = int(initial)
-        self.on_change = on_change
+def fade_in(win, duration_ms=100, steps=5):
+    try:
+        win.attributes("-alpha", 0.0)
+    except Exception:
+        return
 
-        self.bind("<Button-1>", self._on_click)
-        self.bind("<B1-Motion>", self._on_drag)
+    def step(i):
+        if not win.winfo_exists():
+            return
+        try:
+            win.attributes("-alpha", i / steps)
+        except Exception:
+            return
+        if i < steps:
+            win.after(max(1, duration_ms // steps),
+                      lambda: step(i + 1))
+
+    step(0)
+
+
+def animate_cells_cascade(cells, cell_w, cell_h, cols,
+                          delay_ms=15, duration_ms=100, steps=5):
+    if not cells:
+        return
+
+    gap = 2
+
+    def reveal(idx):
+        if idx >= len(cells):
+            return
+        cell = cells[idx]
+        try:
+            if not cell.winfo_exists():
+                return
+        except Exception:
+            return
+
+        r = idx // cols
+        c = idx % cols
+        x = c * (cell_w + gap) + gap // 2
+        y = r * (cell_h + gap) + gap // 2
+
+        def grow(s):
+            if not cell.winfo_exists():
+                return
+            t = s / steps
+            e = 1 - (1 - t) ** 2
+            w = max(1, int(cell_w * e))
+            h = max(1, int(cell_h * e))
+            cx = x + (cell_w - w) // 2
+            cy = y + (cell_h - h) // 2
+            try:
+                cell.place_configure(x=cx, y=cy, width=w, height=h)
+            except Exception:
+                return
+            if s < steps:
+                cell.after(max(1, duration_ms // steps),
+                           lambda: grow(s + 1))
+
+        grow(1)
+        cell.after(delay_ms, lambda: reveal(idx + 1))
+
+    reveal(0)
+
+
+def animate_cells_book(cells, cell_w, cell_h, cols, direction,
+                       duration_ms=220, steps=10):
+    if not cells:
+        return
+
+    gap = 2
+
+    def make_grower(idx, base_x, base_y):
+        def grow(s):
+            if idx >= len(cells):
+                return
+            try:
+                cell = cells[idx]
+                if not cell.winfo_exists():
+                    return
+            except Exception:
+                return
+
+            t = s / steps
+            e = 1 - (1 - t) ** 3
+
+            try:
+                if direction == "left":
+                    w = max(1, int(cell_w * e))
+                    cell.place_configure(x=base_x, y=base_y,
+                                         width=w, height=cell_h)
+                elif direction == "right":
+                    w = max(1, int(cell_w * e))
+                    new_x = base_x + (cell_w - w)
+                    cell.place_configure(x=new_x, y=base_y,
+                                         width=w, height=cell_h)
+                elif direction == "top":
+                    h = max(1, int(cell_h * e))
+                    cell.place_configure(x=base_x, y=base_y,
+                                         width=cell_w, height=h)
+                elif direction == "bottom":
+                    h = max(1, int(cell_h * e))
+                    new_y = base_y + (cell_h - h)
+                    cell.place_configure(x=base_x, y=new_y,
+                                         width=cell_w, height=h)
+            except Exception:
+                return
+
+            if s < steps:
+                cell.after(max(1, duration_ms // steps),
+                           lambda: grow(s + 1))
+
+        return grow
+
+    for i, cell in enumerate(cells):
+        r = i // cols
+        c = i % cols
+        x = c * (cell_w + gap) + gap // 2
+        y = r * (cell_h + gap) + gap // 2
+
+        try:
+            if direction in ("left", "right"):
+                start_x = x if direction == "left" else x + cell_w - 1
+                cell.place_configure(x=start_x, y=y,
+                                     width=1, height=cell_h)
+            else:
+                start_y = y if direction == "top" else y + cell_h - 1
+                cell.place_configure(x=x, y=start_y,
+                                     width=cell_w, height=1)
+        except Exception:
+            continue
+
+        stagger = i * 8
+        grower = make_grower(i, x, y)
+        cell.after(stagger, lambda g=grower: g(1))
+
+
+def run_palette_effect(cells, cell_w, cell_h, cols):
+    effect = get_effect()
+    if effect == "cascade":
+        animate_cells_cascade(cells, cell_w, cell_h, cols,
+                              delay_ms=15, duration_ms=100, steps=5)
+    else:
+        animate_cells_book(cells, cell_w, cell_h, cols, effect,
+                           duration_ms=220, steps=10)
+
+
+class MetroButton(tk.Label):
+    def __init__(self, parent, text, command,
+                 primary=False, danger=False,
+                 padx=20, pady=8,
+                 font=None, width=None):
+        self.primary = primary
+        self.danger = danger
+
+        if primary:
+            base = get_accent()
+            fg = accent_fg(base)
+        elif danger:
+            base = "#c42b1c"
+            fg = "#ffffff"
+        else:
+            base = PANEL
+            fg = TEXT
+
+        self._base_bg = base
+        self._fg = fg
+        self._hover_bg = lighten(base, 0.12)
+        self._press_bg = darken(base, 0.18)
+
+        super().__init__(
+            parent, text=text, bg=base, fg=fg,
+            font=font or (UI_FONT, 9, "bold"),
+            padx=padx, pady=pady,
+            cursor="hand2", bd=0, highlightthickness=0, takefocus=0,
+        )
+        if width:
+            self.configure(width=width)
+        self._command = command
+
+        self.bind("<Enter>", lambda e: self.config(bg=self._hover_bg))
+        self.bind("<Leave>", lambda e: self.config(bg=self._base_bg))
+        self.bind("<ButtonPress-1>", lambda e: self.config(bg=self._press_bg))
+        self.bind("<ButtonRelease-1>", self._on_release)
+
+    def _on_release(self, e):
+        self.config(bg=self._hover_bg)
+        if self._command:
+            self._command()
+
+    def set_accent(self, color=None):
+        if not self.primary:
+            return
+        base = color if color else get_accent()
+        fg = accent_fg(base)
+        self._base_bg = base
+        self._fg = fg
+        self._hover_bg = lighten(base, 0.12)
+        self._press_bg = darken(base, 0.18)
+        self.config(bg=base, fg=fg)
+
+
+class SquareIconButton(tk.Canvas):
+    def __init__(self, parent, box, image_path, fallback_text, command):
+        super().__init__(
+            parent, width=box, height=box,
+            bg=BG, highlightthickness=0, bd=0,
+        )
+        self.box = int(box)
+        self.image_path = image_path
+        self.fallback_text = fallback_text
+        self.command = command
+        self._photo = None
+        self._photo_accent = None
+        self._hovered = False
+        self._pressed = False
+
+        self._build_icon()
         self._draw()
 
-    def _val_to_x(self, v):
-        return self.PAD + (self.W - 2 * self.PAD) * (v / 255.0)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
 
-    def _x_to_val(self, x):
-        x = max(self.PAD, min(self.W - self.PAD, x))
-        v = (x - self.PAD) / (self.W - 2 * self.PAD) * 255
-        return int(round(v))
+    def _build_icon(self):
+        accent = get_accent()
+        icon_color = "#ffffff"
+        bw = SQUARE_BORDER_WIDTH
+        ICON = int(self.box * 0.55 - bw * 2)
+        if ICON < 6:
+            ICON = 6
+        self._photo = tint_icon(self.image_path, icon_color, ICON)
+        self._photo_accent = accent
+        self._icon_color = icon_color
 
     def _draw(self):
         self.delete("all")
-        y = self.H // 2
+        bw = SQUARE_BORDER_WIDTH
+        pad = int(bw)
 
-        self.create_line(self.PAD, y, self.W - self.PAD, y,
-                         fill="#444444", width=3, capstyle="round")
+        accent = get_accent()
+        fill_color = BG
+        if self._pressed:
+            fill_color = blend(BG, accent, 0.35)
+        elif self._hovered:
+            fill_color = blend(BG, accent, 0.18)
 
-        x = self._val_to_x(self.value)
-        self.create_line(self.PAD, y, x, y,
-                         fill=self.color_hex, width=3, capstyle="round")
+        self.create_rectangle(
+            pad, pad, self.box - pad, self.box - pad,
+            outline=accent, width=bw, fill=fill_color,
+        )
+        cx = self.box / 2
+        cy = self.box / 2
+        if self._photo is not None:
+            self.create_image(cx, cy, image=self._photo)
+        else:
+            self.create_text(
+                cx, cy, text=self.fallback_text,
+                fill=accent_fg(accent), font=(UI_FONT, 12, "bold"),
+            )
 
-        self.create_oval(x - self.KNOB_R, y - self.KNOB_R,
-                         x + self.KNOB_R, y + self.KNOB_R,
-                         fill="#ffffff", outline="")
+    def _on_enter(self, e):
+        self._hovered = True
+        self._draw()
+        self.configure(cursor="hand2")
 
-    def set_value(self, v):
-        self.value = int(v)
+    def _on_leave(self, e):
+        self._hovered = False
+        self._pressed = False
         self._draw()
 
-    def _on_click(self, e):
-        self.value = self._x_to_val(e.x)
+    def _on_press(self, e):
+        self._pressed = True
         self._draw()
-        self.on_change(self.value)
 
-    def _on_drag(self, e):
-        self.value = self._x_to_val(e.x)
+    def _on_release(self, e):
+        self._pressed = False
         self._draw()
-        self.on_change(self.value)
+        if self.command:
+            self.command()
+
+    def set_accent(self, accent):
+        self._build_icon()
+        self._draw()
+
+
+MetroIconButton = SquareIconButton
+
+
+class OutlinedButton(tk.Frame):
+    def __init__(self, parent, text, command,
+                 padx=10, pady=8,
+                 font=None):
+        self.command = command
+        self._selected = False
+        self._text = text
+
+        super().__init__(parent, bg=BG)
+        self.label = tk.Label(
+            self, text=text,
+            bg=PANEL, fg=TEXT,
+            font=font or (UI_FONT, 9, "bold"),
+            padx=padx, pady=pady,
+            cursor="hand2", bd=0,
+            highlightthickness=1,
+            highlightbackground="#ffffff",
+            highlightcolor="#ffffff",
+            anchor="w",
+        )
+        self.label.pack(fill="both", expand=True)
+
+        self.label.bind("<Enter>", self._on_enter)
+        self.label.bind("<Leave>", self._on_leave)
+        self.label.bind("<ButtonPress-1>", self._on_press)
+        self.label.bind("<ButtonRelease-1>", self._on_release)
+
+    def _on_enter(self, e):
+        if not self._selected:
+            self.label.config(bg=lighten(PANEL, 0.10))
+
+    def _on_leave(self, e):
+        if not self._selected:
+            self.label.config(bg=PANEL)
+
+    def _on_press(self, e):
+        if not self._selected:
+            self.label.config(bg=darken(PANEL, 0.20))
+
+    def _on_release(self, e):
+        if not self._selected:
+            self.label.config(bg=PANEL)
+        if self.command:
+            self.command()
+
+    def set_selected(self, selected):
+        self._selected = selected
+        if selected:
+            base = get_accent()
+            self.label.config(bg=base, fg=accent_fg(base))
+        else:
+            self.label.config(bg=PANEL, fg=TEXT)
+
+    def refresh_accent(self):
+        if self._selected:
+            base = get_accent()
+            self.label.config(bg=base, fg=accent_fg(base))
+
+
+TILE_COLORS = [
+    "#ff6b6b", "#ff4040", "#c92a2a", "#8b1a1a",
+    "#ffa94d", "#ff8800", "#cc6600", "#804000",
+    "#ffd43b", "#ffcc00", "#b38f00", "#665200",
+    "#a9e34b", "#80ff00", "#4d9900", "#2b5500",
+    "#51cf66", "#30ff30", "#1a8a1a", "#0d440d",
+    "#38d9a9", "#00cc88", "#008055", "#004d33",
+    "#4dabf7", "#0080ff", "#0055aa", "#003366",
+    "#748ffc", "#3030ff", "#1a1a99", "#0d0d4d",
+    "#da77f2", "#b060ff", "#7033cc", "#3d1a66",
+    "#f783ac", "#ff30ff", "#b300b3", "#660066",
+    "#ced4da", "#7a7a7a", "#4d4d4d", "#1a1a1a",
+]
+
+ACCENT_COLORS = list(TILE_COLORS)
+
 
 class PaletteWindow:
-    def __init__(self, root, on_live_preview, on_apply):
+    WIN_W = 400
+    WIN_H = 510
+
+    def __init__(self, root, on_live_preview, on_apply_color):
         self.root = root
         self.win = None
         self.key = None
         self.on_live_preview = on_live_preview
-        self.on_apply = on_apply
+        self.on_apply_color = on_apply_color
+
         self.original_color = None
         self.preview_color = None
-        self.sliders = {}
+        self.cells = []
+        self.cells_by_color = {}
         self.swatch = None
         self.hex_lbl = None
+        self.apply_btn = None
+        self.grid_wrap = None
 
-    def show(self, key, current_hex):
+    def show(self, key, current_hex, current_no_bg=None):
         if self.win is not None and self.win.winfo_exists():
             if self.key == key:
                 self.win.deiconify()
@@ -498,78 +984,135 @@ class PaletteWindow:
         self.key = key
         self.original_color = current_hex
         self.preview_color = current_hex
-        self.sliders = {}
+        self.cells = []
+        self.cells_by_color = {}
 
         self.win = tk.Toplevel(self.root)
         self.win.title(f"Color: {key}")
         self.win.configure(bg=BG)
-        self.win.geometry("280x250")
+        self.win.geometry(f"{self.WIN_W}x{self.WIN_H}")
         self.win.resizable(False, False)
 
-        rgb = hex_to_rgb(current_hex)
-
-        self.swatch = tk.Label(self.win, bg=current_hex, text="",
-                               width=28, height=2)
-        self.swatch.pack(pady=(10, 4))
-
-        self.hex_lbl = tk.Label(self.win, text=current_hex,
-                                bg=BG, fg="#cccccc",
-                                font=("Sans", 10, "bold"))
-        self.hex_lbl.pack()
-
-        for name, color, init in (
-            ("R", "#ff0000", rgb[0]),
-            ("G", "#00ff00", rgb[1]),
-            ("B", "#0000ff", rgb[2]),
-        ):
-            row = tk.Frame(self.win, bg=BG)
-            row.pack(fill="x", padx=14, pady=1)
-
-            tk.Label(row, text=name, bg=BG, fg=color,
-                     font=("Sans", 10, "bold"), width=2
-                     ).pack(side="left")
-
-            slider = ColorSlider(
-                row, color_hex=color, initial=init,
-                on_change=lambda v, n=name: self._on_change(n, v)
-            )
-            slider.pack(side="left", padx=(6, 0))
-            self.sliders[name] = slider
+        tk.Frame(self.win, bg=get_accent(), height=3).pack(
+            side="top", fill="x"
+        )
 
         btns = tk.Frame(self.win, bg=BG)
-        btns.pack(pady=(10, 8))
+        btns.pack(side="bottom", fill="x", padx=12, pady=(8, 12))
 
-        ok = tk.Label(btns, text="Apply", bg="#2a2a33", fg="#ffffff",
-                      font=("Sans", 9, "bold"), padx=16, pady=5,
-                      cursor="hand2")
-        ok.pack(side="left", padx=4)
-        ok.bind("<Button-1>", lambda e: self._apply())
+        MetroButton(btns, "CANCEL", self._cancel,
+                    primary=False, padx=18, pady=8
+                    ).pack(side="right", padx=(6, 0))
 
-        cancel = tk.Label(btns, text="Cancel", bg="#2a2a33", fg="#cccccc",
-                          font=("Sans", 9), padx=16, pady=5,
-                          cursor="hand2")
-        cancel.pack(side="left", padx=4)
-        cancel.bind("<Button-1>", lambda e: self._cancel())
+        self.apply_btn = MetroButton(btns, "APPLY", self._apply,
+                                     primary=True, padx=18, pady=8)
+        self.apply_btn.pack(side="right")
+
+        top = tk.Frame(self.win, bg=BG)
+        top.pack(side="top", fill="x", padx=12, pady=(10, 0))
+
+        tk.Label(top, text=f"COLOR · {key}",
+                 bg=BG, fg=TEXT,
+                 font=(UI_FONT, 10, "bold"),
+                 anchor="w").pack(fill="x")
+
+        swatch_row = tk.Frame(top, bg=BG)
+        swatch_row.pack(fill="x", pady=(6, 0))
+
+        self.swatch = tk.Label(swatch_row, bg=current_hex, text="", height=2)
+        self.swatch.pack(side="left", fill="x", expand=True)
+
+        self.hex_lbl = tk.Label(swatch_row, text=current_hex,
+                                bg=BG, fg=TEXT_MUTED,
+                                font=(UI_FONT, 9, "bold"),
+                                anchor="e", width=9)
+        self.hex_lbl.pack(side="right", padx=(8, 0))
+
+        cols = 8
+        rows = (len(TILE_COLORS) + cols - 1) // cols
+        pad_outer = 6
+        gap = 2
+
+        avail_w = self.WIN_W - pad_outer * 2
+        avail_h = self.WIN_H - 90 - 55 - 3
+
+        cell_w = (avail_w - (cols - 1) * gap) // cols
+        cell_h = (avail_h - (rows - 1) * gap) // rows
+
+        self.grid_wrap = tk.Frame(self.win, bg=BG)
+        self.grid_wrap.pack(side="top", fill="both", expand=True,
+                            padx=pad_outer, pady=(10, 0))
+        self.grid_wrap.pack_propagate(False)
+
+        for i, c in enumerate(TILE_COLORS):
+            r = i // cols
+            col = i % cols
+            x = col * (cell_w + gap) + gap // 2
+            y = r * (cell_h + gap) + gap // 2
+
+            cell = tk.Label(
+                self.grid_wrap, bg=c, text="",
+                bd=0, highlightthickness=0, cursor="hand2",
+            )
+            cell.place(x=x, y=y, width=cell_w, height=cell_h)
+            cell.bind("<Button-1>", lambda e, cc=c: self._pick(cc))
+
+            self.cells.append(cell)
+            self.cells_by_color[c] = cell
+
+        self._highlight(current_hex)
+        self.apply_btn.set_accent(current_hex)
 
         self.win.protocol("WM_DELETE_WINDOW", self._cancel)
 
-    def _on_change(self, name, value):
-        r = self.sliders["R"].value
-        g = self.sliders["G"].value
-        b = self.sliders["B"].value
-        hex_color = rgb_to_hex((r, g, b))
-        self.preview_color = hex_color
-        self.swatch.config(bg=hex_color)
-        self.hex_lbl.config(text=hex_color)
-        self.on_live_preview(self.key, hex_color)
+        for cell in self.cells:
+            try:
+                cell.place_configure(width=1, height=1)
+            except Exception:
+                pass
+        try:
+            self.win.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+        self.win.after(20, lambda: run_palette_effect(
+            self.cells, cell_w, cell_h, cols))
+
+    def _pick(self, color):
+        self.preview_color = color
+        self.swatch.config(bg=color)
+        self.hex_lbl.config(text=color)
+        if self.apply_btn is not None:
+            try:
+                self.apply_btn.set_accent(color)
+            except Exception:
+                pass
+        self._highlight(color)
+        if self.on_live_preview:
+            self.on_live_preview(self.key, color)
+
+    def _highlight(self, color):
+        for c, cell in self.cells_by_color.items():
+            try:
+                cell.config(highlightthickness=0)
+            except Exception:
+                pass
+        if color in self.cells_by_color:
+            try:
+                self.cells_by_color[color].config(
+                    highlightthickness=2,
+                    highlightbackground="#ffffff",
+                    highlightcolor="#ffffff",
+                )
+            except Exception:
+                pass
 
     def _apply(self):
-        if self.key and self.preview_color:
-            self.on_apply(self.key, self.preview_color)
+        if self.preview_color:
+            self.on_apply_color(self.key, self.preview_color)
         self._close()
 
     def _cancel(self):
-        if self.key and self.original_color:
+        if self.key:
             self.on_live_preview(self.key, self.original_color)
         self._close()
 
@@ -581,20 +1124,192 @@ class PaletteWindow:
                 pass
             self.win = None
         self.key = None
-        self.sliders = {}
+        self.cells = []
+        self.cells_by_color = {}
+        self.apply_btn = None
+
+
+class AccentPalette:
+    WIN_W = 400
+    WIN_H = 510
+
+    def __init__(self, root, on_preview, on_apply):
+        self.root = root
+        self.win = None
+        self.on_preview = on_preview
+        self.on_apply = on_apply
+        self.original = None
+        self.selected = None
+        self.cells = []
+        self.cells_by_color = {}
+        self.selected_lbl = None
+        self.apply_btn = None
+        self.grid_wrap = None
+
+    def show(self, current_hex):
+        if self.win is not None and self.win.winfo_exists():
+            self.win.deiconify()
+            self.win.lift()
+            self.win.focus_force()
+            return
+
+        self.original = current_hex
+        self.selected = current_hex
+        self.cells = []
+        self.cells_by_color = {}
+
+        self.win = tk.Toplevel(self.root)
+        self.win.title("Accent color")
+        self.win.configure(bg=BG)
+        self.win.geometry(f"{self.WIN_W}x{self.WIN_H}")
+        self.win.resizable(False, False)
+
+        tk.Frame(self.win, bg=get_accent(), height=3).pack(
+            side="top", fill="x"
+        )
+
+        btns = tk.Frame(self.win, bg=BG)
+        btns.pack(side="bottom", fill="x", padx=12, pady=(8, 12))
+
+        MetroButton(btns, "CANCEL", self._cancel,
+                    primary=False, padx=18, pady=8
+                    ).pack(side="right", padx=(6, 0))
+
+        self.apply_btn = MetroButton(btns, "APPLY", self._apply,
+                                     primary=True, padx=18, pady=8)
+        self.apply_btn.pack(side="right")
+
+        top = tk.Frame(self.win, bg=BG)
+        top.pack(side="top", fill="x", padx=12, pady=(10, 0))
+
+        tk.Label(top, text="ACCENT COLOR",
+                 bg=BG, fg=TEXT,
+                 font=(UI_FONT, 10, "bold"),
+                 anchor="w").pack(fill="x")
+
+        self.selected_lbl = tk.Label(top, text=current_hex,
+                                     bg=BG, fg=TEXT_MUTED,
+                                     font=(UI_FONT, 9, "bold"),
+                                     anchor="e")
+        self.selected_lbl.pack(fill="x", pady=(4, 0))
+
+        cols = 8
+        rows = (len(ACCENT_COLORS) + cols - 1) // cols
+        pad_outer = 6
+        gap = 2
+
+        avail_w = self.WIN_W - pad_outer * 2
+        avail_h = self.WIN_H - 90 - 55 - 3
+
+        cell_w = (avail_w - (cols - 1) * gap) // cols
+        cell_h = (avail_h - (rows - 1) * gap) // rows
+
+        self.grid_wrap = tk.Frame(self.win, bg=BG)
+        self.grid_wrap.pack(side="top", fill="both", expand=True,
+                            padx=pad_outer, pady=(10, 0))
+        self.grid_wrap.pack_propagate(False)
+
+        for i, c in enumerate(ACCENT_COLORS):
+            r = i // cols
+            col = i % cols
+            x = col * (cell_w + gap) + gap // 2
+            y = r * (cell_h + gap) + gap // 2
+
+            cell = tk.Label(
+                self.grid_wrap, bg=c, text="",
+                bd=0, highlightthickness=0, cursor="hand2",
+            )
+            cell.place(x=x, y=y, width=cell_w, height=cell_h)
+            cell.bind("<Button-1>", lambda e, cc=c: self._pick(cc))
+
+            self.cells.append(cell)
+            self.cells_by_color[c] = cell
+
+        self._highlight(self.original)
+        self.apply_btn.set_accent(current_hex)
+
+        self.win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        for cell in self.cells:
+            try:
+                cell.place_configure(width=1, height=1)
+            except Exception:
+                pass
+        try:
+            self.win.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+        self.win.after(20, lambda: run_palette_effect(
+            self.cells, cell_w, cell_h, cols))
+
+    def _pick(self, color):
+        self.selected = color
+        if self.selected_lbl is not None:
+            try:
+                self.selected_lbl.config(text=color)
+            except Exception:
+                pass
+        if self.apply_btn is not None:
+            try:
+                self.apply_btn.set_accent(color)
+            except Exception:
+                pass
+        self._highlight(color)
+        if self.on_preview:
+            self.on_preview(color)
+
+    def _highlight(self, color):
+        for c, cell in self.cells_by_color.items():
+            try:
+                cell.config(highlightthickness=0)
+            except Exception:
+                pass
+        if color in self.cells_by_color:
+            try:
+                self.cells_by_color[color].config(
+                    highlightthickness=2,
+                    highlightbackground="#ffffff",
+                    highlightcolor="#ffffff",
+                )
+            except Exception:
+                pass
+
+    def _apply(self):
+        if self.selected:
+            self.on_apply(self.selected)
+        self._close()
+
+    def _cancel(self):
+        if self.on_preview and self.original:
+            self.on_preview(self.original)
+        self._close()
+
+    def _close(self):
+        if self.win is not None:
+            try:
+                self.win.destroy()
+            except Exception:
+                pass
+            self.win = None
+        self.cells = []
+        self.cells_by_color = {}
+        self.selected_lbl = None
+        self.apply_btn = None
+
 
 class DiskDetailWindow:
+    WIN_W = 280
+    WIN_H = 160
+
     def __init__(self, root):
         self.root = root
         self.win = None
-        self.label = None
-        self.bar = None
-        self.info = None
+        self.canvas = None
         self.mountpoint = None
+        self._photo = None
 
     def show(self, mountpoint):
         self.mountpoint = mountpoint
-
         if self.win is not None and self.win.winfo_exists():
             self.win.deiconify()
             self.win.lift()
@@ -603,24 +1318,19 @@ class DiskDetailWindow:
             return
 
         self.win = tk.Toplevel(self.root)
-        self.win.title("")
+        self.win.title("Disk")
         self.win.configure(bg=BG)
-        self.win.geometry("280x110")
+        self.win.geometry(f"{self.WIN_W}x{self.WIN_H}")
         self.win.resizable(False, False)
 
-        self.bar = tk.Canvas(self.win, width=240, height=16,
-                             bg=PANEL, highlightthickness=0, bd=0)
-        self.bar.pack(pady=(14, 6))
-
-        self.label = tk.Label(self.win, text="", bg=BG, fg="#ffffff",
-                              font=("Sans", 12, "bold"))
-        self.label.pack()
-
-        self.info = tk.Label(self.win, text="", bg=BG, fg="#aaaaaa",
-                             font=("Sans", 8), justify="center")
-        self.info.pack(pady=(4, 0))
+        self.canvas = tk.Canvas(self.win, bg=BG,
+                                highlightthickness=0, bd=0,
+                                width=self.WIN_W,
+                                height=self.WIN_H)
+        self.canvas.pack(fill="both", expand=True)
 
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
+        fade_in(self.win)
         self._refresh()
 
     def _refresh(self):
@@ -631,85 +1341,367 @@ class DiskDetailWindow:
 
         percent = usage.percent
         used = usage.used
-        free = usage.free
         total = usage.total
+        free = usage.free
 
-        self.bar.delete("all")
-        w = 240
-        h = 16
-        fill_w = int(w * percent / 100)
+        cw = self.WIN_W
+        ch = self.WIN_H
 
-        if percent < 60:
-            color = "#59ff00"
-        elif percent < 85:
-            color = "#ffc800"
-        else:
-            color = "#ff4040"
+        accent = get_accent() or DEFAULT_ACCENT
+        try:
+            _ = hex_to_rgb(accent)
+        except Exception:
+            accent = DEFAULT_ACCENT
+        accent_dark = darken(accent, 0.45)
 
-        self.bar.create_rectangle(0, 0, fill_w, h, fill=color, outline="")
-        self.label.config(text=f"{percent:.0f}%")
-        self.info.config(
-            text=f"Used: {human_bytes(used)}   "
-                 f"Free: {human_bytes(free)}   "
-                 f"Total: {human_bytes(total)}"
-        )
+        img = Image.new("RGB", (cw, ch), accent_dark)
+        d = ImageDraw.Draw(img)
+
+        filled_h = int(ch * percent / 100)
+        empty_h = ch - filled_h
+
+        if empty_h > 0:
+            d.rectangle((0, 0, cw, empty_h), fill=accent)
+        if filled_h > 0:
+            d.rectangle((0, empty_h, cw, ch), fill=accent_dark)
+
+        fg_light = (0, 0, 0) if lum(hex_to_rgb(accent)) > 140 else (255, 255, 255)
+        fg_dark = (0, 0, 0) if lum(hex_to_rgb(accent_dark)) > 140 else (255, 255, 255)
+
+        f_title = get_font(13)
+        title = "DISK USAGE"
+        bb = d.textbbox((0, 0), title, font=f_title)
+        d.text((16 - bb[0], 16 - bb[1]), title, font=f_title, fill=fg_light)
+
+        info_text = (f"{human_bytes(used)} / {human_bytes(total)}"
+                     f"   ·   free {human_bytes(free)}")
+        f_info = get_font(11)
+        bb2 = d.textbbox((0, 0), info_text, font=f_info)
+        d.text((16 - bb2[0], 40 - bb2[1]),
+               info_text, font=f_info, fill=fg_light)
+
+        pct_text = f"{percent:.0f}%"
+        f_pct = get_font(64)
+        bb3 = d.textbbox((0, 0), pct_text, font=f_pct)
+        th3 = bb3[3] - bb3[1]
+        tx3 = 16 - bb3[0]
+        ty3 = ch - 16 - th3 - bb3[1]
+        d.text((tx3, ty3), pct_text, font=f_pct, fill=fg_dark)
+
+        self._photo = ImageTk.PhotoImage(img)
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
 
     def _on_close(self):
         if self.win is not None:
             self.win.destroy()
             self.win = None
+        self.canvas = None
+        self._photo = None
+
 
 class HelpWindow:
+    WIN_W = 520
+    WIN_H = 560
+
     def __init__(self, root):
         self.root = root
         self.win = None
+        self.canvas = None
+        self.scroll_frame = None
+        self.effect_btns = {}
+        self._strip_widgets = []
+        self._built = False
 
     def show(self):
         if self.win is not None and self.win.winfo_exists():
             self.win.deiconify()
             self.win.lift()
             self.win.focus_force()
+            self._refresh_effect_buttons()
             return
 
         self.win = tk.Toplevel(self.root)
         self.win.title("Help")
         self.win.configure(bg=BG)
-        self.win.geometry("420x340")
+        self.win.geometry(f"{self.WIN_W}x{self.WIN_H}")
         self.win.resizable(False, False)
+        self.win.withdraw()
 
-        text = (
-            f"{APP_NAME} - open source system resource monitor\n\n"
-            "Controls:\n"
-            "* Left click on tile: set active metric in tray\n"
-            "* Left click on TEMP: switch C / F\n"
-            "* Left click on CUSTOM: set custom text (up to 3 chars)\n"
-            "* Double click on DISK: disk details\n"
-            "* Click on pencil: change metric color\n"
-            "* Mouse wheel: font size\n"
-            "* Click on tray icon: open window\n"
-            "Author: M1han\n"
-            "github.com/MihanPROJECTS/OS-RSM"
+        self._top_strip = tk.Frame(self.win, bg=get_accent(), height=3)
+        self._top_strip.pack(side="top", fill="x")
+
+        container = tk.Frame(self.win, bg=BG)
+        container.pack(fill="both", expand=True)
+
+        self.canvas = tk.Canvas(container, bg=BG, highlightthickness=0, bd=0)
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        sb = tk.Scrollbar(container, orient="vertical",
+                          command=self.canvas.yview,
+                          bg=PANEL, troughcolor=BG, bd=0,
+                          highlightthickness=0, width=8)
+        sb.pack(side="right", fill="y")
+        self.canvas.configure(yscrollcommand=sb.set)
+
+        self.scroll_frame = tk.Frame(self.canvas, bg=BG)
+        self._canvas_window = self.canvas.create_window(
+            (0, 0), window=self.scroll_frame, anchor="nw"
         )
 
-        tk.Label(self.win, text=text, bg=BG, fg="#cccccc",
-                 font=("Sans", 9), justify="left").pack(padx=20, pady=20)
+        self.scroll_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(
+                scrollregion=self.canvas.bbox("all")
+            )
+        )
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfigure(
+                self._canvas_window, width=e.width
+            )
+        )
 
+        self.win.bind("<Enter>", self._bind_wheel)
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        self.win.deiconify()
+        self.win.lift()
+        self.win.focus_force()
+
+        self.win.after(1, self._build_content_deferred)
+
+    def _build_content_deferred(self):
+        if self.win is None or not self.win.winfo_exists():
+            return
+        try:
+            self._build_content()
+            self._built = True
+        except Exception as e:
+            print("help build:", e)
+
+    def _bind_wheel(self, e=None):
+        self.win.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        self.win.bind_all("<Button-4>", self._on_mousewheel_linux_up, add="+")
+        self.win.bind_all("<Button-5>", self._on_mousewheel_linux_down, add="+")
+
+    def _on_mousewheel(self, event):
+        if self.win is None or not self.win.winfo_exists():
+            return
+        try:
+            delta = -1 if event.delta > 0 else 1
+            self.canvas.yview_scroll(delta, "units")
+        except Exception:
+            pass
+
+    def _on_mousewheel_linux_up(self, event):
+        try:
+            self.canvas.yview_scroll(-1, "units")
+        except Exception:
+            pass
+
+    def _on_mousewheel_linux_down(self, event):
+        try:
+            self.canvas.yview_scroll(1, "units")
+        except Exception:
+            pass
+
+    def _section_title(self, parent, text):
+        wrap = tk.Frame(parent, bg=BG)
+        wrap.pack(fill="x", padx=20, pady=(16, 6))
+
+        inner = tk.Frame(wrap, bg=BG)
+        inner.pack(anchor="w")
+
+        lbl = tk.Label(
+            inner, text=text.upper(),
+            bg=BG, fg=TEXT,
+            font=(UI_FONT, 11, "bold"),
+            anchor="w",
+        )
+        lbl.pack(anchor="w")
+
+        strip = tk.Frame(inner, bg=get_accent(), height=2, width=1)
+        strip.pack(anchor="w", pady=(6, 0))
+
+        self._strip_widgets.append((strip, lbl))
+
+    def _row(self, parent, left, right):
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", padx=20, pady=2)
+
+        tk.Label(
+            row, text=left,
+            bg=BG, fg=TEXT,
+            font=(UI_FONT, 9, "bold"),
+            anchor="w", width=22,
+        ).pack(side="left")
+
+        tk.Label(
+            row, text=right,
+            bg=BG, fg=TEXT_MUTED,
+            font=(UI_FONT, 9),
+            anchor="w", justify="left",
+        ).pack(side="left", fill="x", expand=True)
+
+    def _paragraph(self, parent, text):
+        tk.Label(
+            parent, text=text,
+            bg=BG, fg=TEXT_MUTED,
+            font=(UI_FONT, 9),
+            anchor="w", justify="left",
+            wraplength=self.WIN_W - 60,
+        ).pack(fill="x", padx=20, pady=(2, 0))
+
+    def _build_content(self):
+        header = tk.Frame(self.scroll_frame, bg=BG)
+        header.pack(fill="x", padx=20, pady=(20, 4))
+
+        hdr_lbl = tk.Label(
+            header, text=APP_NAME,
+            bg=BG, fg=TEXT,
+            font=(UI_FONT, 18, "bold"),
+            anchor="w",
+        )
+        hdr_lbl.pack(anchor="w")
+
+        tk.Label(
+            header, text=f"System resource monitor  ·  v{APP_VERSION}",
+            bg=BG, fg=TEXT_MUTED,
+            font=(UI_FONT, 9),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 0))
+
+        hdr_strip = tk.Frame(header, bg=get_accent(), height=2, width=1)
+        hdr_strip.pack(anchor="w", pady=(10, 0))
+        self._strip_widgets.append((hdr_strip, hdr_lbl))
+
+        self._section_title(self.scroll_frame, "Tiles")
+        self._row(self.scroll_frame, "Left click", "set active metric in tray")
+        self._row(self.scroll_frame, "Right click", "change tile color")
+        self._row(self.scroll_frame, "Mouse wheel", "change font size")
+
+        self._section_title(self.scroll_frame, "Special tiles")
+        self._row(self.scroll_frame, "TEMP (left click)",
+                  "switch between °C and °F")
+        self._row(self.scroll_frame, "CUSTOM (left click)",
+                  "type custom text (up to 3 chars)")
+        self._row(self.scroll_frame, "DISK (double click)",
+                  "open detailed disk usage")
+
+        self._section_title(self.scroll_frame, "Bottom bar")
+        self._row(self.scroll_frame, "?  (help)", "open this window")
+        self._row(self.scroll_frame, "■  (accent)",
+                  "change global accent color")
+        self._row(self.scroll_frame, "✕  (clear)",
+                  "reset all colors to default")
+
+        self._section_title(self.scroll_frame, "System tray")
+        self._row(self.scroll_frame, "Left click", "open main window")
+        self._row(self.scroll_frame, "Right click",
+                  "menu with EXIT option")
+
+        self._section_title(self.scroll_frame, "Animation")
+        self._paragraph(
+            self.scroll_frame,
+            "Choose the animation played when opening a color palette "
+            "(right-click a tile)."
+        )
+
+        effects = [
+            ("cascade", "CASCADE"),
+            ("left",    "BOOK · LEFT"),
+            ("right",   "BOOK · RIGHT"),
+            ("top",     "BOOK · TOP"),
+            ("bottom",  "BOOK · BOTTOM"),
+        ]
+        for e, label in effects:
+            btn = OutlinedButton(
+                self.scroll_frame, label,
+                command=lambda k=e: self._set_effect(k),
+                padx=12, pady=6,
+            )
+            btn.pack(fill="x", padx=20, pady=2)
+            self.effect_btns[e] = btn
+
+        self._refresh_effect_buttons()
+
+        self._section_title(self.scroll_frame, "About")
+        self._paragraph(self.scroll_frame, "Author: M1han")
+        self._paragraph(self.scroll_frame, "github.com/MihanPROJECTS/OS-RSM")
+
+        tk.Frame(self.scroll_frame, bg=BG, height=20).pack(fill="x")
+
+        self.win.after(30, self._animate_strips)
+
+    def _animate_strips(self):
+        if self.win is None or not self.win.winfo_exists():
+            return
+        for strip, lbl in self._strip_widgets:
+            try:
+                target_w = lbl.winfo_reqwidth()
+                if target_w < 1:
+                    target_w = 60
+                self._animate_strip(strip, target_w)
+            except Exception:
+                pass
+
+    def _animate_strip(self, strip, target_w):
+        steps = 6
+
+        def step(i):
+            if self.win is None or not self.win.winfo_exists():
+                return
+            try:
+                if not strip.winfo_exists():
+                    return
+            except Exception:
+                return
+            t = i / steps
+            e = 1 - (1 - t) ** 2
+            w = max(1, int(target_w * e))
+            try:
+                strip.config(width=w)
+            except Exception:
+                return
+            if i < steps:
+                strip.after(30, lambda: step(i + 1))
+
+        step(1)
+
+    def _set_effect(self, e):
+        save_effect(e)
+        self._refresh_effect_buttons()
+
+    def _refresh_effect_buttons(self):
+        cur = get_effect()
+        for e, btn in self.effect_btns.items():
+            if btn is None:
+                continue
+            btn.set_selected(cur == e)
+
     def _on_close(self):
+        try:
+            self.win.unbind_all("<MouseWheel>")
+            self.win.unbind_all("<Button-4>")
+            self.win.unbind_all("<Button-5>")
+        except Exception:
+            pass
         if self.win is not None:
             self.win.destroy()
             self.win = None
+        self.canvas = None
+        self.scroll_frame = None
+        self.effect_btns = {}
+        self._strip_widgets = []
+        self._built = False
+
 
 class Tile:
     SIZE = TILE_SIZE
 
-    WAVE_DURATION_MS = 400
-    WAVE_FPS = 60
-    WAVE_MAX_R = int(TILE_RENDER_SIZE * 0.85)
-
     def __init__(self, parent, key, get_color_fn, on_click, on_double,
-                 on_edit, get_display, is_active):
+                 on_edit, get_display, is_active, get_grid_pos):
         self.parent = parent
         self.key = key
         self.get_color_fn = get_color_fn
@@ -718,27 +1710,16 @@ class Tile:
         self.on_edit = on_edit
         self.get_display = get_display
         self.is_active = is_active
+        self.get_grid_pos = get_grid_pos
 
         self.canvas = tk.Canvas(
             parent, width=self.SIZE, height=self.SIZE,
             bg=BG, highlightthickness=0, bd=0
         )
         self.hovered = False
-        self.pressed = False
         self._photo = None
         self._last_render_key = None
-
-        self._wave_start = 0.0
-        self._wave_active = False
-        self._wave_job = None
-
-        self._edit_icon_img = None
-        try:
-            pil = Image.open(EDIT_ICON_PATH).convert("RGBA")
-            pil = pil.resize((20, 20), Image.LANCZOS)
-            self._edit_icon_img = ImageTk.PhotoImage(pil)
-        except Exception as e:
-            print("edit icon not loaded:", e)
+        self._pulse_until = 0.0
 
         self._draw(force=True)
 
@@ -747,92 +1728,37 @@ class Tile:
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Double-Button-1>", self._on_double)
+        self.canvas.bind("<Button-3>", self._on_right_click)
 
     def _render_key(self):
         value_text, label = self.get_display()
         color = self.get_color_fn(self.key)
+        pulse = time.time() < self._pulse_until
         return (value_text, label, color,
-                self.hovered, self.pressed, self.is_active())
+                self.hovered, self.is_active(), pulse)
 
-    def _draw(self, force=False, wave_r=None, wave_alpha=0):
-        base_key = self._render_key()
-        if wave_r is not None and wave_alpha > 0:
-            key = base_key + ("wave", int(wave_r), int(wave_alpha))
-        else:
-            key = base_key
+    def _draw(self, force=False):
+        key = self._render_key()
         if not force and key == self._last_render_key:
             return
         self._last_render_key = key
 
-        value_text, label, color = base_key[0], base_key[1], base_key[2]
+        value_text, label, color = key[0], key[1], key[2]
+        pulse = key[5]
+
+        active = self.is_active() or pulse
+
         img = render_tile_image(
             color, value_text, label,
-            self.hovered, self.pressed, self.is_active(),
-            wave_r=wave_r, wave_alpha=wave_alpha
+            self.hovered, active,
+            state.font_scale,
         )
         self._photo = ImageTk.PhotoImage(img)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
 
-        if self._edit_icon_img is not None:
-            pad = 4
-            box = 22
-            x0 = self.SIZE - pad - box
-            y0 = pad
-            self.canvas.create_rectangle(
-                x0, y0, x0 + box, y0 + box,
-                fill="#000000", outline="",
-                stipple="gray50",
-                tags="edit_bg"
-            )
-            self.canvas.create_image(
-                self.SIZE - pad, pad,
-                anchor="ne", image=self._edit_icon_img,
-                tags="edit_icon"
-            )
-            self.canvas.tag_bind("edit_icon", "<Button-1>",
-                                 lambda e: self._on_edit_click())
-            self.canvas.tag_bind("edit_bg", "<Button-1>",
-                                 lambda e: self._on_edit_click())
-
-    def _on_edit_click(self):
-        if self.on_edit:
-            self.on_edit(self.key)
-
     def refresh(self):
-        if self._wave_active:
-            return
         self._draw()
-
-    def _start_wave(self):
-        self._wave_start = time.time()
-        self._wave_active = True
-        if self._wave_job is not None:
-            try:
-                self.canvas.after_cancel(self._wave_job)
-            except Exception:
-                pass
-        self._tick_wave()
-
-    def _tick_wave(self):
-        if not self._wave_active:
-            return
-        elapsed = (time.time() - self._wave_start) * 1000.0
-        t = elapsed / self.WAVE_DURATION_MS
-        if t >= 1.0:
-            self._wave_active = False
-            self._wave_job = None
-            self._draw(force=True)
-            return
-
-        ease = 1.0 - (1.0 - t) ** 2
-        r = self.WAVE_MAX_R * ease
-        alpha = int(180 * (1.0 - t))
-
-        self._draw(force=True, wave_r=r, wave_alpha=alpha)
-
-        dt = int(1000.0 / self.WAVE_FPS)
-        self._wave_job = self.canvas.after(dt, self._tick_wave)
 
     def _on_enter(self, e):
         self.hovered = True
@@ -841,28 +1767,31 @@ class Tile:
 
     def _on_leave(self, e):
         self.hovered = False
-        self.pressed = False
         self._draw()
 
     def _on_press(self, e):
-        self.pressed = True
-        self._draw()
+        self._pulse_until = time.time() + 0.12
+        self._draw(force=True)
+        self.canvas.after(130, self._pulse_end)
+
+    def _pulse_end(self):
+        self._pulse_until = 0.0
+        self._draw(force=True)
 
     def _on_release(self, e):
-        was = self.pressed
-        self.pressed = False
-        self._draw()
-        if was:
-            self._start_wave()
-            if self.on_click:
-                self.on_click()
+        if self.on_click:
+            self.on_click()
 
     def _on_double(self, e):
         if self.on_double:
             self.on_double()
 
+    def _on_right_click(self, e):
+        if self.on_edit:
+            self.on_edit(self.key)
+
+
 class ConfigWindow:
-    COLS = 3
     GAP = 8
 
     def __init__(self, root):
@@ -872,11 +1801,11 @@ class ConfigWindow:
         TILE = TILE_SIZE
         GAP = self.GAP
         PAD = 16
-        VER_H = 32
+        VER_H = 34
 
-        w = 3 * TILE + 2 * GAP + 2 * PAD
+        w = 3 * TILE + 2 * GAP + 2 * PAD + 4
         h = 3 * TILE + 2 * GAP + PAD + VER_H
-        root.geometry(str(w) + "x" + str(h))
+        root.geometry(f"{w}x{h}")
         root.configure(bg=BG)
         root.resizable(False, False)
         root.protocol("WM_DELETE_WINDOW", root.withdraw)
@@ -885,72 +1814,51 @@ class ConfigWindow:
         self.custom_editing = False
         self._wheel_pending = False
         self._wheel_dir = 0
+        self._grid_positions = {}
+        self._grid_cols = 3
+        self._grid_rows = 1
 
         self.disk_detail = DiskDetailWindow(root)
         self.help_window = HelpWindow(root)
+
         self.palette = PaletteWindow(
             root,
             on_live_preview=self._live_preview,
-            on_apply=self._apply_color,
+            on_apply_color=self._apply_color,
+        )
+        self.accent_palette = AccentPalette(
+            root,
+            on_preview=self._preview_accent,
+            on_apply=self._apply_accent,
         )
 
-        self.grid_frame = tk.Frame(root, bg=BG)
+        self.content = tk.Frame(root, bg=BG)
+        self.content.place(x=0, y=0, relwidth=1, relheight=1)
+
+        self.grid_frame = tk.Frame(self.content, bg=BG)
         self.grid_frame.pack(padx=PAD, pady=(PAD, PAD + VER_H))
 
-        bottom = tk.Frame(root, bg=BG)
-        bottom.place(relx=0.0, rely=1.0, anchor="sw", x=10, y=-6)
+        bottom = tk.Frame(self.content, bg=BG)
+        bottom.place(relx=0.0, rely=1.0, anchor="sw", x=PAD, y=-6)
 
-        # Кнопка ? картинка vopros.png, можно заменить, если компилировать исходники
-        self.help_btn_img = None
-        try:
-            pil = Image.open(VOPROS_ICON_PATH).convert("RGBA")
-            pil = pil.resize((18, 18), Image.LANCZOS)
-            self.help_btn_img = ImageTk.PhotoImage(pil)
-        except Exception as e:
-            print("vopros icon not loaded:", e)
+        BOX = 34
+        self.help_btn = MetroIconButton(bottom, BOX,
+                                        VOPROS_ICON_PATH, "?",
+                                        self.help_window.show)
+        self.help_btn.pack(side="left")
 
-        if self.help_btn_img is not None:
-            self.help_btn = tk.Label(
-                bottom, bg=BG, image=self.help_btn_img,
-                cursor="hand2", padx=2
-            )
-            self.help_btn.pack(side="left")
-            self.help_btn.bind("<Button-1>", lambda e: self.help_window.show())
-        else:
-            self.help_btn = tk.Label(
-                bottom, text="?", bg=BG, fg="#cccccc",
-                font=("Sans", 11, "bold"), width=2, height=1,
-                cursor="hand2"
-            )
-            self.help_btn.pack(side="left")
-            self.help_btn.bind("<Button-1>", lambda e: self.help_window.show())
+        self.pall_btn = MetroIconButton(bottom, BOX,
+                                        PALL_ICON_PATH, "■",
+                                        self._open_accent)
+        self.pall_btn.pack(side="left", padx=(6, 0))
 
-        self.clear_btn_img = None
-        try:
-            pil = Image.open(CLEAR_ICON_PATH).convert("RGBA")
-            pil = pil.resize((18, 18), Image.LANCZOS)
-            self.clear_btn_img = ImageTk.PhotoImage(pil)
-        except Exception as e:
-            print("clear icon not loaded:", e)
+        self.clear_btn = MetroIconButton(bottom, BOX,
+                                         CLEAR_ICON_PATH, "✕",
+                                         self._clear_colors)
+        self.clear_btn.pack(side="left", padx=(6, 0))
 
-        if self.clear_btn_img is not None:
-            self.clear_btn = tk.Label(
-                bottom, bg=BG, image=self.clear_btn_img,
-                cursor="hand2", padx=2
-            )
-            self.clear_btn.pack(side="left", padx=(4, 0))
-            self.clear_btn.bind("<Button-1>", lambda e: self._clear_colors())
-        else:
-            self.clear_btn = tk.Label(
-                bottom, text="x", bg=BG, fg="#cccccc",
-                font=("Sans", 10, "bold"), width=2, cursor="hand2"
-            )
-            self.clear_btn.pack(side="left", padx=(4, 0))
-            self.clear_btn.bind("<Button-1>", lambda e: self._clear_colors())
-
-        # версия название
-        tk.Label(root, text="v" + APP_VERSION,
-                 bg=BG, fg=TEXT_MUTED, font=("Sans", 7)
+        tk.Label(self.content, text="v" + APP_VERSION,
+                 bg=BG, fg=TEXT_MUTED, font=(UI_FONT, 7)
                  ).place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-6)
 
         root.bind("<MouseWheel>", self._on_wheel)
@@ -960,6 +1868,44 @@ class ConfigWindow:
         self.build_ui()
         self._bind_global_click()
         self.refresh_loop()
+
+    def _open_accent(self):
+        self.accent_palette.show(get_accent())
+
+    def _preview_accent(self, color):
+        for k, tile in self.tiles.items():
+            CONFIG.setdefault("colors", {})[k] = color
+            tile._draw(force=True)
+        for btn in (self.help_btn, self.pall_btn, self.clear_btn):
+            try:
+                btn.set_accent(color)
+            except Exception:
+                pass
+
+    def _apply_accent(self, color):
+        save_accent(color)
+        for k in list(CONFIG.get("tile_order", [])):
+            save_color(k, color)
+        save_config(CONFIG)
+        self._redraw_all()
+        for btn in (self.help_btn, self.pall_btn, self.clear_btn):
+            try:
+                btn.set_accent(color)
+            except Exception:
+                pass
+
+    def _live_preview(self, key, color):
+        CONFIG.setdefault("colors", {})[key] = color
+        save_config(CONFIG)
+        tile = self.tiles.get(key)
+        if tile:
+            tile._draw(force=True)
+
+    def _apply_color(self, key, color):
+        save_color(key, color)
+        tile = self.tiles.get(key)
+        if tile:
+            tile._draw(force=True)
 
     def _on_wheel(self, event):
         self._schedule_wheel(1 if event.delta > 0 else -1)
@@ -977,8 +1923,7 @@ class ConfigWindow:
         if direction == 0:
             return
         self._wheel_dir = 0
-        step = 0.1
-        s = state.font_scale + direction * step
+        s = state.font_scale + direction * 0.1
         s = max(0.7, min(1.5, round(s, 2)))
         if s == state.font_scale:
             return
@@ -989,6 +1934,12 @@ class ConfigWindow:
 
     def _clear_colors(self):
         reset_colors()
+        accent = get_accent()
+        for btn in (self.help_btn, self.pall_btn, self.clear_btn):
+            try:
+                btn.set_accent(accent)
+            except Exception:
+                pass
         self._redraw_all()
 
     def _bind_global_click(self):
@@ -1008,7 +1959,6 @@ class ConfigWindow:
     def _on_key(self, event):
         if not self.custom_editing:
             return
-
         if event.keysym == "BackSpace":
             state.custom_text = state.custom_text[:-1]
         elif event.keysym in ("Return", "Escape"):
@@ -1020,7 +1970,6 @@ class ConfigWindow:
                 state.custom_text = (state.custom_text + ch)[:3]
         else:
             return
-
         CONFIG["custom_text"] = state.custom_text
         save_config(CONFIG)
         tile = self.tiles.get(CUSTOM_KEY)
@@ -1040,16 +1989,38 @@ class ConfigWindow:
     def _disk_mountpoint(self):
         return "C:\\" if sys.platform == "win32" else "/"
 
+    def _visible_keys(self):
+        order = CONFIG.get("tile_order", list(ALL_KEYS) + [CUSTOM_KEY])
+        hidden = set(CONFIG.get("hidden_tiles", []))
+        visible = [k for k in order if k not in hidden]
+        if CUSTOM_KEY in visible:
+            visible.remove(CUSTOM_KEY)
+        visible.append(CUSTOM_KEY)
+        return visible
+
+    def _grid_pos_for(self, key):
+        pos = self._grid_positions.get(key)
+        if pos is None:
+            return (0, 0, self._grid_cols, self._grid_rows)
+        r, c = pos
+        return (r, c, self._grid_cols, self._grid_rows)
+
     def build_ui(self):
         for w in self.grid_frame.winfo_children():
             w.destroy()
         self.tiles.clear()
+        self._grid_positions.clear()
 
-        keys = list(METRICS.keys()) + [CUSTOM_KEY]
+        keys = self._visible_keys()
+        cols = 3
+        rows = max(1, (len(keys) + cols - 1) // cols)
+        self._grid_cols = cols
+        self._grid_rows = rows
 
         for idx, k in enumerate(keys):
             r = idx // 3
             c = idx % 3
+            self._grid_positions[k] = (r, c)
 
             on_double = None
             if k == "DISK":
@@ -1063,27 +2034,15 @@ class ConfigWindow:
                 on_double=on_double,
                 on_edit=self._open_palette,
                 get_display=self._display_for(k),
-                is_active=lambda kk=k: state.current == kk
+                is_active=lambda kk=k: state.current == kk,
+                get_grid_pos=lambda kk=k: self._grid_pos_for(kk),
             )
             tile.canvas.grid(row=r, column=c,
                              padx=self.GAP // 2, pady=self.GAP // 2)
             self.tiles[k] = tile
 
     def _open_palette(self, key):
-        current = get_color(key)
-        self.palette.show(key, current)
-
-    def _live_preview(self, key, color):
-        CONFIG.setdefault("colors", {})[key] = color
-        tile = self.tiles.get(key)
-        if tile:
-            tile._draw(force=True)
-
-    def _apply_color(self, key, color):
-        save_color(key, color)
-        tile = self.tiles.get(key)
-        if tile:
-            tile._draw(force=True)
+        self.palette.show(key, get_color(key))
 
     def _display_for(self, key):
         def fn():
@@ -1093,9 +2052,7 @@ class ConfigWindow:
                 unit = state.temp_unit
 
             if key == CUSTOM_KEY:
-                if custom:
-                    return custom, "CUSTOM"
-                return "...", "CUSTOM"
+                return (custom, "CUSTOM") if custom else ("...", "CUSTOM")
 
             if key == "TEMP":
                 if raw is None:
@@ -1114,7 +2071,6 @@ class ConfigWindow:
             self.custom_editing = True
             state.custom_text = ""
             CONFIG["custom_text"] = ""
-            save_config(CONFIG)
             state.current = CUSTOM_KEY
             CONFIG["current"] = CUSTOM_KEY
             save_config(CONFIG)
@@ -1122,14 +2078,9 @@ class ConfigWindow:
             return
 
         if key == "TEMP":
-            if state.current != "TEMP":
-                state.current = "TEMP"
-                CONFIG["current"] = "TEMP"
-                save_config(CONFIG)
-            if state.temp_unit == "C":
-                state.temp_unit = "F"
-            else:
-                state.temp_unit = "C"
+            state.current = "TEMP"
+            CONFIG["current"] = "TEMP"
+            state.temp_unit = "F" if state.temp_unit == "C" else "C"
             CONFIG["temp_unit"] = state.temp_unit
             save_config(CONFIG)
             self._redraw_all()
@@ -1150,7 +2101,7 @@ class ConfigWindow:
     def refresh_loop(self):
         for tile in self.tiles.values():
             tile.refresh()
-        self.root.after(700, self.refresh_loop)
+        self.root.after(1000, self.refresh_loop)
 
 
 def ui_pump(root, icon):
@@ -1161,6 +2112,7 @@ def ui_pump(root, icon):
                 root.deiconify()
                 root.lift()
                 root.focus_force()
+                fade_in(root, duration_ms=120, steps=6)
             elif cmd == "quit":
                 icon.stop()
                 root.quit()
@@ -1173,15 +2125,23 @@ def ui_pump(root, icon):
 
 def main():
     print("[font] using:", FONT_FILE or "system fallback")
-    print("[edit icon]:", EDIT_ICON_PATH if os.path.exists(EDIT_ICON_PATH) else "not found")
-    print("[clear icon]:", CLEAR_ICON_PATH if os.path.exists(CLEAR_ICON_PATH) else "not found")
-    print("[vopros icon]:", VOPROS_ICON_PATH if os.path.exists(VOPROS_ICON_PATH) else "not found")
+    print("[pall icon path]:", PALL_ICON_PATH)
+    print("[pall icon exists]:", os.path.exists(PALL_ICON_PATH))
+    print("[assets dir]:", ASSETS_DIR)
 
-    t = threading.Thread(target=stats_worker, daemon=True)
-    t.start()
+    threading.Thread(target=stats_worker, daemon=True).start()
 
     icon = build_tray()
-    threading.Thread(target=icon.run, daemon=True).start()
+
+    def run_tray():
+        try:
+            icon.run()
+        except Exception as e:
+            import traceback
+            print("[tray] ERROR:", e)
+            traceback.print_exc()
+
+    threading.Thread(target=run_tray, daemon=True).start()
 
     root = tk.Tk()
     ConfigWindow(root)
